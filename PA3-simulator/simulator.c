@@ -396,7 +396,6 @@ static long process_step(int pnum, Process *q) {
    return TRUE;
 }
 
-
 /* public routine: swap one page out */
 int pageout(int process, int page) {
     if (process<0 || process>=procs
