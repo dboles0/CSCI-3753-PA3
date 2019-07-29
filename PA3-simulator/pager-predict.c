@@ -23,7 +23,7 @@ void pageit(Pentry q[MAXPROCESSES]) {
     /* This file contains the stub for a predictive pager */
     /* You may need to add/remove/modify any part of this file */
 
-    /* Static vars */
+    /* Static vars*/
     static int initialized = 0;
     static int tick = 1; // artificial time
 

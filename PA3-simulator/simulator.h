@@ -65,9 +65,3 @@ extern int pageout(int process, int page);
  */
 extern void pageit(Pentry q[MAXPROCESSES]);
 
-extern void assert(int boolean, char *boolstr, char *file, int line);
-extern void check(int boolean, char *boolstr, char *file, int line);
-extern int posit(int boolean, char *boolstr, char *file, int line);
-extern void die(char *condition, char *file, int line);
-extern void carp(char *condition, char *file, int line);
-extern int find_LRU_page(int process_times[], int a_page);

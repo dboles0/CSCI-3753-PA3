@@ -15,6 +15,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <errno.h>
 
 #include "simulator.h"
 
@@ -27,17 +28,17 @@ void pageit(Pentry q[MAXPROCESSES]) {
     static int initialized = 0;
     static int tick = 1; // artificial time
     static int timestamps[MAXPROCESSES][MAXPROCPAGES];
-    static int subset_pages[3];
 
-    /* Local vars */
+
+    /* Loocal vars */
     int proctmp;
     int pagetmp;
     int pc;
     int proc;
     int page;
-    int oldpage;
+    int min_page;
+    int chosen_proc;
     int chosen_page;
-    int flag;
 
     /* initialize static vars on first run */
     /* zero-fill-on-deman */
@@ -56,7 +57,7 @@ void pageit(Pentry q[MAXPROCESSES]) {
     /* loop through process frames*/	
     for(proc=0; proc < MAXPROCESSES; proc++){
 	
-		/* Is process active? */
+		/* Is process active? = Yes */
 		if(q[proc].active) {
 		    /* Dedicate all work to first active process*/
 		    pc = q[proc].pc;	 	        // program counter for process
@@ -70,64 +71,56 @@ void pageit(Pentry q[MAXPROCESSES]) {
 			/* if we cannot swap the page then we need to do some work*/
 			if(!pagein(proc,page)) {
 			
-		
 				/* Select a Page to Evict */	
-				/* find the page that has not been used for the longest time period */
-				/* loop through the process q returning smallest used timestamp */
-				for(oldpage=0; oldpage < q[proc].npages; oldpage++){
-				
-					if(oldpage != page){	
-						// loop through add one more if not there
-						// if full call find_LRU_page 
-						// replace then move to next one
-						chosen_page = -1;
-						chosen_page = find_LRU_page(timestamps[proc], oldpage);		
 
-						/* Call pageout() = Failure */
-						if(!pageout(proc, chosen_page)){
-							//investigate failure
-							break;
+
+				/* initialize min_page and chosen proc/page*/
+				min_page = timestamps[0][0];
+				chosen_proc = 0;
+				chosen_page = 0;
+
+				/* find the page that has not been used for the longest time period */
+				/* look throught all processes to find lowest timestamp */
+				for(int check_proc = 0; check_proc < MAXPROCESSES; check_proc++){
+					for(int check_page = 0; check_page < MAXPROCPAGES; check_page++){
+
+						//if we have a memory block that is smaller and exists in memeory update 
+						if(min_page > timestamps[check_proc][check_page] && q[proc].pages[check_page]){
+							min_page = timestamps[check_proc][check_page];
+							chosen_proc = check_proc;
+							chosen_page = check_page;
 						}
 					}
-					
 				}
+				
+    		    		timestamps[chosen_proc][chosen_page] = tick;      // set time stamp for swaped process
 
+				/* Call pageout() = Failure */
+				if(!pageout(chosen_proc, chosen_page)){
+					//investigate failure
+					//perror("pageout error");
+					break;
+				} /* Call pageout() = Success*/
 
-				/* Call pageout() = Success*/
-			}	
-    			timestamps[proc][page] = tick;      // set time stamp for swaped process
+			} /* Call pagin() = Success */
+			// in the event swap success increment tick 
+			else {
+    		    		timestamps[proc][page] = tick;      
+			}
 
-			/* Call pagin() = Success */
-		    }
+		    } /* Is Page Swapped In? = Yes */
 
-		    /* Is Page Swapped In? = Yes */
-		    break;
-		}
-    }
+		} /* Is process active? = No */
 
-    /* advance time for next pageit iteration */
+    // advance the tick count for the next processes
     tick++;
+
+    } /* Another Process? = Yes/No */
+
 }
 
-int find_LRU_page(int process_times[], int a_page){
-	// process_times = [8][9][6][7][10]   <-(proc)
-	//                       ^
-	//                      (i)
-	// step 1: i=8, min_page=8
-	// step 2: i=9, min_page=8
-	// step 3: i=6, min_page=6; 
-	// step 4: i=7, min_page=6; 
-
-	int i = 0;
-	int min_page = process_times[0];
-	int chosen_page = 0;
-	
-	for(i = 1; i < a_page; i++){
-		if(process_times[i] < min_page){
-			min_page = process_times[i];
-			chosen_page = i;
-		}
-	}
-
-	return chosen_page;
-}
+// pool of process empty spaces 
+// keep a pointer at the end of each process 
+// when it is time to look for memory choose the process with the smallest poitner counter
+// find out how much large of space each program is allocated 
+// use this process memory spots until we reach a threashold of 

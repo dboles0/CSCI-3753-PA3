@@ -65,7 +65,7 @@ inline void check(int boolean, char *boolstr, char *file, int line) {
 }
 
 // die if an assertion fails.
-inline void assert(int boolean, char *boolstr, char *file, int line) {
+static inline void assert(int boolean, char *boolstr, char *file, int line) {
     if (!boolean) {
         fprintf(stderr,"Assertion %s failed in line %d of file %s\n",
                 boolstr,line,file);
