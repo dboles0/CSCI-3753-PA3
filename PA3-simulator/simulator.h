@@ -65,3 +65,4 @@ extern int pageout(int process, int page);
  */
 extern void pageit(Pentry q[MAXPROCESSES]);
 
+extern void check_threashold(Pentry q[MAXPROCESSES], int proc, int timestamps[MAXPROCESSES][MAXPROCPAGES], int p_table[MAXPROCESSES+1][MAXPROCPAGES+1]);

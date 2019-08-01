@@ -119,8 +119,3 @@ void pageit(Pentry q[MAXPROCESSES]) {
 
 }
 
-// pool of process empty spaces 
-// keep a pointer at the end of each process 
-// when it is time to look for memory choose the process with the smallest poitner counter
-// find out how much large of space each program is allocated 
-// use this process memory spots until we reach a threashold of 
