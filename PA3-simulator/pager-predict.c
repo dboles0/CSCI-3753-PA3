@@ -17,6 +17,77 @@
 #include <stdlib.h>
 
 #include "simulator.h"
+#define K 15
+
+// keep track of each page that gets swaped with matrix count
+// initialie the matirx with 1's so we have an equal probability  p=(1/MAX)
+// keep track of cold and hot programs by maintaining a total count for each process and selecting the lowest count 
+// estimate the next one will be below a theashold = the number of counts that are over a certain amount 
+// example: if we have 1/8 2/8 2/8 3/8 then we can see that 3 of the pages are => 2 (threashold) so we have 3/8 probability of next entry faulting on hot page) 
+// we may also want to consider condiguious blocks of if there are hot block then we would not want to page maybe within 4 bocks afterords to account for locality
+// to help with thrashing we make a window of say 4 at time t_1 if our "working set size" is say 4 (unique accesses) and at time t_2 with another 4 windo we have 2 (2, 4, 2, 4). 
+// t_1 needs 4 frams and t_2 needs 2 framses (use large windows)
+// we may want to swap out a process if there is thrashing happening
+// (solution 1) to do this we will need to set a reference threashold for thrashing 
+// if we set a timer to go off periotically any time a page is associated set a reference bits so we can see how many frames were refenced during that last time period. it then 0's out bit
+// we can then use this information to approximate the page rate hit over that time
+// the refereced bit can now be considered part of the working set and use this to calculate how many pages were being accessed in each one of those time periods
+// (solution 2) directly mesure the page fault frequency (PFF)
+// when PFF > upper threashold, then increase the # frames allocated to process
+// when PFF < lower threashold, then decreased the # frames allocated to process
+
+// deal with thrashing by: 
+// when PFF > upper threashold, then increase the # frames allocated to process
+// when PFF < lower threashold, then decreased the # frames allocated to process
+
+typedef struct {
+	int page; 
+	int timestamp;
+	int hit; 
+	int miss;
+
+} matrix_info;
+
+void left_shift(matrix_info *m, int a_page, int timestamp, int hit, int miss){
+
+	for(int i=1; i<K; ++i){
+		m[i-1] = m[i];
+	}
+
+	m[K-1].page = a_page;
+	m[K-1].hit += 1;
+	m[K-1].timestamp = timestamp;
+	m[K-1].hit = hit;
+	m[K-1].miss = miss;
+}
+
+matrix_info ** init_matrix(void){
+	
+	matrix_info **m;
+	m = (matrix_info **) malloc(MAXPROCESSES * sizeof(matrix_info *));
+	for(int i=0; i< MAXPROCESSES; ++i){
+		m[i] = (matrix_info *) malloc(K * sizeof(matrix_info));
+	}
+
+	for(int i=0; i<MAXPROCESSES; i++){
+		for(int j=0; j<K; j++){
+			m[i][j].page = 0;
+			m[i][j].hit = 0;
+			m[i][j].miss = 0;
+			m[i][j].timestamp = 0;
+		}
+	}
+
+	return m;
+}
+
+void destroy_matrix(matrix_info **m){
+
+    
+    for(int i=0; i<MAXPROCESSES; ++i){
+	free(m[i]);
+    }
+}
 
 
 void pageit(Pentry q[MAXPROCESSES]) {
@@ -28,8 +99,7 @@ void pageit(Pentry q[MAXPROCESSES]) {
     static int initialized = 0;
     static int tick = 1; // artificial time
     static int timestamps[MAXPROCESSES][MAXPROCPAGES];
-    static int p_table[MAXPROCESSES+1][MAXPROCPAGES+1];
-
+    matrix_info **m;
 
     /* Loocal vars */
     int proctmp;
@@ -38,9 +108,8 @@ void pageit(Pentry q[MAXPROCESSES]) {
     int proc;
     int page;
     int min_page;
-    int chosen_proc;
     int chosen_page;
-    int cnt = 85999;
+    
 
     /* initialize static vars on first run */
     /* zero-fill-on-deman */
@@ -49,13 +118,11 @@ void pageit(Pentry q[MAXPROCESSES]) {
         for(proctmp=0; proctmp < MAXPROCESSES; proctmp++){
                 for(pagetmp=0; pagetmp < MAXPROCPAGES; pagetmp++){
                         timestamps[proctmp][pagetmp] = 0;
-                        p_table[proctmp][pagetmp] = 0;
                 }
         }
-	/* initialize a totals column */
-	for(int x=0; x<MAXPROCESSES; x++){
-		p_table[x][MAXPROCPAGES] = 0;
-	}
+	/* initialize probability window */
+	m = init_matrix();
+
     initialized = 1;
     }
 
@@ -81,49 +148,34 @@ void pageit(Pentry q[MAXPROCESSES]) {
 
                                 /* Select a Page to Evict */
 
-				/* Check threashold for thrashing */
-				if(p_table[proc][MAXPROCPAGES] != 0){
-					check_threashold(q, proc, timestamps, p_table);
-				}
 
-                                /* initialize min_page and chosen proc/page*/
-                                min_page = timestamps[0][0];
-                                chosen_proc = 0;
+				/* mark page that missed */
+				left_shift(m[proc], page, tick, 0, 1);
+				min_page = 9999;
                                 chosen_page = 0;
 
-                                /* find the page that has not been used for the longest time period */
-                                /* look throught all processes to find lowest timestamp */
-                                for(int check_proc = 0; check_proc < MAXPROCESSES; check_proc++){
-                                        for(int check_page = 0; check_page < MAXPROCPAGES; check_page++){
-
-                                                //if we have a memory block that is smaller and exists in memeory update 
-                                                if(min_page > timestamps[check_proc][check_page] && q[proc].pages[check_page]){
-                                                        min_page = timestamps[check_proc][check_page];
-                                                        chosen_proc = check_proc;
-                                                        chosen_page = check_page;
-                                                }
-                                        }
-                                }
-
-                                timestamps[chosen_proc][chosen_page] = tick;      // set time stamp for swaped process
-				p_table[chosen_proc][chosen_page] += 1;           // add count to page
-				p_table[chosen_proc][MAXPROCPAGES] += 1;          // add to chosen program total
-				p_table[MAXPROCESSES][MAXPROCPAGES] += 1;         // add to total p_table
+                                for(int check_page = 0; check_page < K; check_page++){
+						
+					if((min_page > m[proc][check_page].page) & (q[proc].pages[check_page])){
+						min_page = m[proc][check_page].page;
+						chosen_page = check_page;
+					}
+				}
 
 				/* Call pageout() = Failure */
-				if(!pageout(chosen_proc, chosen_page)){
+				if(!pageout(proc, chosen_page)){
                                         //investigate failure
-                                        //perror("pageout error");
                                         break;
                                 } /* Call pageout() = Success*/
 
                         } /* Call pagin() = Success */
                         // in the event swap success increment tick 
                         else {
-                                timestamps[proc][page] = tick;
+				left_shift(m[proc], page, tick, 1, 0);
                         }
 
                     } /* Is Page Swapped In? = Yes */
+	  	    
 
                 } /* Is process active? = No */
 
@@ -131,145 +183,96 @@ void pageit(Pentry q[MAXPROCESSES]) {
     tick++;
 
     } /* Another Process? = Yes/No */
-    if(p_table[MAXPROCESSES][MAXPROCPAGES] > cnt){
 
-	    for(int i=0; i< MAXPROCESSES; i++){
-		for(int j=0; j<MAXPROCPAGES; j++){
-			printf("[%d]", p_table[j][i]);
-		}
-		printf("\n");
-	    }
-	    printf("\n");
-
-    }
-
-}
-// keep track of each page that gets swaped with matrix count
-// initialie the matirx with 1's so we have an equal probability  p=(1/MAX)
-// keep track of cold and hot programs by maintaining a total count for each process and selecting the lowest count 
-// estimate the next one will be below a theashold = the number of counts that are over a certain amount 
-// example: if we have 1/8 2/8 2/8 3/8 then we can see that 3 of the pages are => 2 (threashold) so we have 3/8 probability of next entry faulting on hot page) 
-// we may also want to consider condiguious blocks of if there are hot block then we would not want to page maybe within 4 bocks afterords to account for locality
-// to help with thrashing we make a window of say 4 at time t_1 if our "working set size" is say 4 (unique accesses) and at time t_2 with another 4 windo we have 2 (2, 4, 2, 4). 
-// t_1 needs 4 frams and t_2 needs 2 framses (use large windows)
-// we may want to swap out a process if there is thrashing happening
-// (solution 1) to do this we will need to set a reference threashold for thrashing 
-// if we set a timer to go off periotically any time a page is associated set a reference bits so we can see how many frames were refenced during that last time period. it then 0's out bit
-// we can then use this information to approximate the page rate hit over that time
-// the refereced bit can now be considered part of the working set and use this to calculate how many pages were being accessed in each one of those time periods
-// (solution 2) directly mesure the page fault frequency (PFF)
-// when PFF > upper threashold, then increase the # frames allocated to process
-// when PFF < lower threashold, then decreased the # frames allocated to process
-
-// deal with thrashing by: 
-// when PFF > upper threashold, then increase the # frames allocated to process
-// when PFF < lower threashold, then decreased the # frames allocated to process
-void check_threashold(Pentry q[MAXPROCESSES], int proc, int timestamps[MAXPROCESSES][MAXPROCPAGES], int p_table[MAXPROCESSES+1][MAXPROCPAGES+1]) {
-	int total = p_table[MAXPROCESSES][MAXPROCPAGES];
-	int upper_threashold = 8/10;
-	int lower_threashold = 2/10;
-
-	int max_process = 0; 
-	int max_process_value = 0;
-	int min_process = 0;
-	int min_process_value = total;
-	
-	int p_upper = 0;
-	int p_lower = 0;
-
-	// find the max and min processes
-	for(int i=0; i<MAXPROCESSES; i++){
-		if(p_table[i][MAXPROCPAGES] > max_process_value){
-			max_process_value = p_table[i][MAXPROCPAGES];
-			max_process = i;
-		}		
-		if(p_table[i][MAXPROCPAGES] < min_process_value){
-			min_process_value = p_table[i][MAXPROCPAGES];
-			min_process = i;
-		}		
-	}
-		
-	p_upper = max_process_value/total;
-	p_lower = min_process_value/total;
-
-	// if there's over an 80% probablility the next action will be above the threashold	
-	// then we will oppen free 10 memory blocks for alloacation for that process
-	if(p_upper > upper_threashold){
-	
-		for(int i=0; i<10; i++){
-			/* initialize min_page and chosen proc/page*/
-			int min_page = timestamps[0][0];
-			int chosen_page = 0;
-
-			for(int check_page = 0; check_page < MAXPROCPAGES; check_page++){
-
-				//if we have a memory block that is smaller and exists in memeory update 
-				if(min_page > timestamps[min_process][check_page] && q[proc].pages[check_page]){
-					min_page = timestamps[min_process][check_page];
-					chosen_page = check_page;
-				}
-			}
-			
-
-			if(!pageout(min_process, chosen_page)){
-				//investigate failure
-				//perror("pageout error");
-				break;
-			} 
-		}
-	}
-	// if there is an 80% probablility the next action will be above the threashold	
-	if(p_lower < lower_threashold){
-		
-		for(int i=0; i<10; i++){
-			/* initialize min_page and chosen proc/page*/
-			int max_page = timestamps[0][0];
-			int chosen_page = 0;
-
-			/* find the page that has not been used for the longest time period */
-			/* look throught all processes to find lowest timestamp */
-			for(int check_page = 0; check_page < MAXPROCPAGES; check_page++){
-
-				//if we have a memory block that is smaller and exists in memeory update 
-				if(max_page < timestamps[max_process][check_page] && q[proc].pages[check_page]){
-					max_page = timestamps[max_process][check_page];
-					chosen_page = check_page;
-				}
-			}
-
-                        pagein(max_process, chosen_page);
-		}
-	}
+    /* free matrix */
+    //destroy_matrix(m);
 
 }
 
-// If there was a miss on any given page 
-// what is the probability the next action will be a miss?
-// well if we have A then we know A' is the only other option
-// hit rate = percentage of memory accesses which are satisfied by page
-// miss rate = 1 - hit rate
-// 
+// refrence: https://homes.cs.washington.edu/~karlin/papers/Markov.pdf
+// we have n pages that may be either in memory or on disk
+// only k pages may be in memory at any givin time
+// if a page currently requestin in memory (hit) no cost in incured
+// if page is not in memory (fault) it must be fetched form memory for a cost
+// if there are already k pages in memory one of the pages mus be evicted
+// the decistion to evict must be made by decistion process
+// let M = marcov chain whos state space is the set of n-pages { [p][p][p][p][p] } S = 5
+// let A = paging alorithm then f_A(M,k) is the long term frequency of faults
+
+// find transition probabilieis by sampeling large initial prefix of refrence string
+
+// Phase 1: keep a windos of last k+i requested pages, for some 0 < i < k;
+//          at the begining of the phase the window is just the k most recently requested pages; 
+//          when a "new" page p is requested, it is added to the window.
+//          the phase ends when the k+1 distinct page is requested in the current phase. 
+//          the window then srings back to size k
+//                    
 
 //                  Event              Satisfied accesses
 // P(hit) =>   P =  ________  so  P = ____________________
 //                  Outcomes           Memory accesses
 
-// e.x. P1 = [2][4][10][1][7]      access = {4, 3, 2, 1, 5, 7, 4, 3, 2} P = 6/9 hit = .666 and miss = .333                   
-// current matrix = A [.66] "p(hit)"
-// repeat hits (rep hit#) = A -> A [.33] "p(hit given hit)"
+// e.x. P1 = [4][4][4][4][4][4][4][4][4][4][7][7][7]      access = {4, 3, 2, 1, 5, 7, 4, 3, 2, 4, 7, 3, 8} 
+//           [0][3][3][3][3][3][3][3][3][3][3][3][3]
+//           [0][0][2][1][5][7][7][7][2][2][2][2][8]
+
+// k = 3
+// window of 7
+// (1) 4 = 1, (2) 3, = 1, (3) 2 = 1, (4) 1 = 1, (5) 5 = 1, (6) 7 = 1, (7) 4 = 2, (8) 3 = 2, (9) 2 = 2, (10) 4 = 2, (11) 7 =2
+// P(P1[0]) = 1st[1], 2nd[.5], 3rd[.33], 4th[.25], 5th[.2], 6th[.16], 7th[.28], 8th[.14], 9th[.14], 10th[.28]
+// P(P1[1]) = 1st[0], 2nd[.5], 3rd[.33], 4th[.25], 5th[.2], 6th[.16], 7th[.14], 8th[.28], 9th[.14], 10th[.14]
+// P(P1[2]) = 1st[0], 2nd[0],  3rd[.33], 4th[.25], 5th[.2], 6th[.16], 7th[.14], 8th[.14], 9th[.28], 10th[.14]
+
+//            1  2  3  4  5  6  7  8  9 10    11
+//            4  3  2  1  5  7  4  3  2  4     7
+//      P1 = [4][4][4][1][5][7][4][4][4][4]   [.68][7]
+//           [0][3][3][3][3][3][3][3][3][3]   [.85][3]
+//           [0][0][2][2][2][2][2][2][2][2]   [.85][2]
+
+// clearly we need marcov chaining to predict next event since this only gets current prob
+// so let take a look form 10 to 11
+
+// repeat hits (rep hit#) = A -> A [.28] "p(hit given hit)"
               
 
 //    TREE REPRESENTATION
-//              -.33 A
-//       .66 A-       
-//     -        -.66 A'
-// 0 -          - _ A
-//     - .33 A'-
-//              - _ A'
+//              -.07 A
+//       .28 A-       
+//     -        -.93 A'
+// 0 -          -.20 A
+//     - .72 A'-
+//              -.80 A'
 
 
 //  TRANSISTION MATIRIX
 //        A  A'
-//     A|.66 .33| 
-//    A'| _   _ |
+//     A|.07 .93| 
+//    A'|.20 .80|
+
+//         A   A'
+// S_o = |.28 .72| (initial state distrubution matrix/initial state probability matrix)
+
+//         A   A'         A  A'
+// S_1 = |.28 .72| *  A|.07 .93|   => [ (.28 * .07) + (.72 * .93) , (.28 *.20) + (.72 * .80) ] => 
+//                   A'|.20 .80|
+
+//         A   
+// S_1 = |.68 |
+
+
+//  TRANSISTION MATIRIX 2
+//        A  A'
+//     A|.01 .99| 
+//    A'|.10 .90|
+
+//         A   A'
+// S_o = |.14 .86| (initial state distrubution matrix/initial state probability matrix)
+
+//         A   A'         A  A'
+// S_1 = |.14 .86| *  A|.01 .99|   => [ (.14 * .01) + (.86 * .99) , (.14 *.10) + (.86 * .90) ] => 
+//                   A'|.10 .90|
+
+//         A  
+// S_1 = |.85 |
+
 
